@@ -262,6 +262,41 @@ pub fn parse_vm_location(v: &Value) -> Option<PathBuf> {
     v.get("org.eclipse.jdt.ls.core.vm.location").and_then(Value::as_str).filter(|s| !s.is_empty()).map(PathBuf::from)
 }
 
+/// `java.project.listSourcePaths` → the name of the jdtls project owning `module`.
+/// The command answers `BuildPathCommand$ListCommandResult` whose `data` is a
+/// `SourcePath[]` of `{path, displayPath, classpathEntry, projectName, projectType}`;
+/// the project of the deepest source root under (or containing) `module` wins.
+pub fn parse_project_name(v: &Value, module: &Path) -> Option<String> {
+    let module = path_key(module);
+    let mut best: Option<(usize, String)> = None;
+    for sp in v.get("data")?.as_array()? {
+        let Some(name) = sp.get("projectName").and_then(Value::as_str).filter(|n| !n.is_empty()) else { continue };
+        let Some(root) = sp.get("path").and_then(Value::as_str) else { continue };
+        let root = path_key(Path::new(root));
+        if !is_under(&root, &module) && !is_under(&module, &root) {
+            continue;
+        }
+        let depth = root.split('/').count();
+        if best.as_ref().is_none_or(|(d, _)| depth > *d) {
+            best = Some((depth, name.to_owned()));
+        }
+    }
+    best.map(|(_, name)| name)
+}
+
+/// Case-insensitive `/`-separated key of a path: jdtls roots arrive as Windows paths
+/// whose spelling and drive-letter case differ from our own.
+fn path_key(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/").to_lowercase()
+}
+
+/// `path` equals `ancestor` or lives below it, by path components.
+fn is_under(path: &str, ancestor: &str) -> bool {
+    let path: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let ancestor: Vec<&str> = ancestor.split('/').filter(|s| !s.is_empty()).collect();
+    path.len() >= ancestor.len() && path[..ancestor.len()] == ancestor[..]
+}
+
 /// Errors that mean "jdtls has not imported this project (yet)".
 fn not_imported(e: &IdeError) -> bool {
     let m = e.message.to_ascii_lowercase();
@@ -693,6 +728,16 @@ impl LspManager {
         }
         parse_port(&v).ok_or_else(|| IdeError::new(ErrorKind::Protocol, format!("unexpected debug server port: {v}")))
     }
+
+    /// The jdtls project serving `module`. java-debug needs `projectName` in its launch
+    /// and attach arguments to evaluate expressions (lazy variable `toString()`, watches)
+    /// when its workspace imports more than one project.
+    pub async fn java_project_name(&self, module: &Path) -> IdeResult<Option<String>> {
+        let v = self
+            .jdtls_project_command(module, "java.project.listSourcePaths", Vec::new(), &CancellationToken::new())
+            .await?;
+        Ok(parse_project_name(&v, module))
+    }
 }
 
 impl LspManager {
@@ -921,5 +966,27 @@ mod tests {
         assert!(not_imported(&e));
         assert!(missing_bundle(&IdeError::invalid("No delegateCommandHandler for vscode.java.startDebugSession")));
         assert!(!missing_bundle(&e));
+    }
+
+    #[test]
+    fn project_name_from_listed_source_paths() {
+        let workspace = json!({
+            "status": true, "message": null,
+            "data": [
+                { "path": r"D:\ws\bc-java\core\src\main\java", "projectName": "core", "projectType": "Gradle" },
+                { "path": r"D:\ws\bc-java\learning\src\main\java", "projectName": "learning", "projectType": "Gradle" },
+                { "path": r"D:\ws\bc-java\learning\src\test\java", "projectName": "learning", "projectType": "Gradle" },
+            ]
+        });
+        // The module is the Gradle project dir; drive-letter case and separators differ.
+        assert_eq!(parse_project_name(&workspace, Path::new(r"d:\WS\bc-java\learning")).as_deref(), Some("learning"));
+        // A module can be a source root itself (plain Java project), and an unrelated
+        // module matches nothing.
+        let single = json!({ "data": [ { "path": r"D:\p\app\src", "projectName": "app" } ] });
+        assert_eq!(parse_project_name(&single, Path::new(r"D:\p\app\src")).as_deref(), Some("app"));
+        assert_eq!(parse_project_name(&single, Path::new(r"D:\p\other")), None);
+        // A component prefix ("app2" vs "app") is not a match.
+        assert_eq!(parse_project_name(&single, Path::new(r"D:\p\app2")), None);
+        assert_eq!(parse_project_name(&json!({ "data": [] }), Path::new(r"D:\p\app")), None);
     }
 }

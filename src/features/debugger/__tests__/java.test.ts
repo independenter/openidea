@@ -45,6 +45,10 @@ vi.mock("@/platform/ipc", async (orig) => {
         invoked.push(["javaDebugServer", a]);
         return ok(41234);
       },
+      javaProjectName: (...a: unknown[]) => {
+        invoked.push(["javaProjectName", a]);
+        return ok("api");
+      },
     },
   };
 });
@@ -79,10 +83,12 @@ describe("Java debugging (java-debug through jdtls)", () => {
     expect(invoked).toEqual([
       ["javaResolveLaunch", ["api", false, true, expect.any(Number)]],
       ["javaDebugServer", ["api"]],
+      ["javaProjectName", ["api"]],
     ]);
     expect(l).toMatchObject({ adapter: "java-debug", request: "launch", cwd: "/p/api", args: [], env: { A: "1" } });
     expect(JSON.parse(l.extraJson!)).toMatchObject({
       debugServer: 41234,
+      projectName: "api",
       mainClass: "a.Main",
       classPaths: ["/p/target/classes", "/m2/a.jar"],
       javaExec: "/jdk21/bin/java",
@@ -143,6 +149,7 @@ describe("Java debugging (java-debug through jdtls)", () => {
       programArgs: ["--port", "8081 x"],
     });
     expect(invoked.some(([command]) => command === "javaDebugServer")).toBe(false);
+    expect(invoked.some(([command]) => command === "javaProjectName")).toBe(false);
   });
 
   it("routes launch and JDWP attach in a mixed module to Kotlin without starting jdtls' adapter", async () => {
@@ -157,12 +164,18 @@ describe("Java debugging (java-debug through jdtls)", () => {
       timeout: 30_000,
     });
     expect(invoked.some(([command]) => command === "javaDebugServer")).toBe(false);
+    expect(invoked.some(([command]) => command === "javaProjectName")).toBe(false);
   });
 
   it("attaches to a JDWP agent", async () => {
     const l = await javaAttachConfig({ name: "mvn test", module: "", hostName: "127.0.0.1", port: 5005 }, "/p");
     expect(l).toMatchObject({ request: "attach", cwd: "/p" });
-    expect(JSON.parse(l.extraJson!)).toMatchObject({ debugServer: 41234, hostName: "127.0.0.1", port: 5005 });
+    expect(JSON.parse(l.extraJson!)).toMatchObject({
+      debugServer: 41234,
+      projectName: "api",
+      hostName: "127.0.0.1",
+      port: 5005,
+    });
   });
 });
 

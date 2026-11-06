@@ -717,6 +717,11 @@ export const commands = {
 	javaResolveLaunch: (module: string, test: boolean, build: boolean, request: RequestId) => typedError<JavaLaunchInfo, IdeError>(__TAURI_INVOKE("java_resolve_launch", { module, test, build, request })),
 	/**  Port of java-debug's DAP server inside the jdtls serving `module` (started on demand). */
 	javaDebugServer: (module: string) => typedError<number, IdeError>(__TAURI_INVOKE("java_debug_server", { module })),
+	/**
+	 *  Name of the jdtls project serving `module` (java-debug needs it to evaluate
+	 *  expressions when the workspace imports more than one project).
+	 */
+	javaProjectName: (module: string) => typedError<string | null, IdeError>(__TAURI_INVOKE("java_project_name", { module })),
 	/**  Incremental build of the jdtls workspace serving `module` (e.g. before HotSwap). */
 	javaBuildWorkspace: (module: string) => typedError<JavaBuildStatus, IdeError>(__TAURI_INVOKE("java_build_workspace", { module })),
 	/**  Starts a session owned by this window: its events (and those of child sessions) go here only. */

@@ -369,6 +369,7 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
         build::build_run,
         java::java_resolve_launch,
         java::java_debug_server,
+        java::java_project_name,
         java::java_build_workspace,
         debug::debug_start,
         debug::debug_set_breakpoints,

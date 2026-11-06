@@ -73,6 +73,19 @@ async function debugServer(module: string, signal?: AbortSignal): Promise<number
   }
 }
 
+/** jdtls project owning `module`: java-debug needs `projectName` in its launch and attach
+ * arguments to evaluate expressions (lazy `toString()` values, watches) when the workspace
+ * imports more than one project. Best effort: a single-project workspace evaluates without it.
+ */
+async function projectNameOf(module: string, signal?: AbortSignal): Promise<string | undefined> {
+  try {
+    return (await call(commands.javaProjectName(module))) ?? undefined;
+  } catch {
+    signal?.throwIfAborted();
+    return undefined;
+  }
+}
+
 /** Launch request for an Application configuration (`java … -cp ${classpath} Main args`). */
 export async function javaLaunchConfig(
   rc: RunConfig,
@@ -123,7 +136,7 @@ export async function javaLaunchConfig(
       }),
     };
   }
-  const port = await debugServer(module, preparation?.signal);
+  const [port, projectName] = await Promise.all([debugServer(module, preparation?.signal), projectNameOf(module)]);
   preparation?.signal.throwIfAborted();
   return {
     name: rc.name,
@@ -136,6 +149,7 @@ export async function javaLaunchConfig(
     env: { ...rc.env },
     extraJson: JSON.stringify({
       debugServer: port,
+      projectName,
       mainClass: parsed.mainClass,
       classPaths,
       modulePaths: info.modulePaths,
@@ -179,7 +193,7 @@ export async function javaAttachConfig(target: JavaAttachTarget, root: string): 
       extraJson: JSON.stringify({ projectRoot: cwd, hostName: target.hostName, port: target.port, timeout: 30_000 }),
     };
   }
-  const port = await debugServer(target.module);
+  const [port, projectName] = await Promise.all([debugServer(target.module), projectNameOf(target.module)]);
   return {
     name: target.name,
     adapter: JAVA_ADAPTER,
@@ -188,6 +202,12 @@ export async function javaAttachConfig(target: JavaAttachTarget, root: string): 
     args: [],
     cwd: target.module ? join(root, target.module) : root,
     env: {},
-    extraJson: JSON.stringify({ debugServer: port, hostName: target.hostName, port: target.port, timeout: 30_000 }),
+    extraJson: JSON.stringify({
+      debugServer: port,
+      projectName,
+      hostName: target.hostName,
+      port: target.port,
+      timeout: 30_000,
+    }),
   };
 }

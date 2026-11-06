@@ -32,6 +32,18 @@ pub async fn java_debug_server(window: Window, state: State<'_, AppState>, modul
     ide_host::ops::java::java_debug_server(&state.host, window.label(), module).await
 }
 
+/// Name of the jdtls project serving `module` (java-debug needs it to evaluate
+/// expressions when the workspace imports more than one project).
+#[tauri::command]
+#[specta::specta]
+pub async fn java_project_name(
+    window: Window,
+    state: State<'_, AppState>,
+    module: PathBuf,
+) -> IdeResult<Option<String>> {
+    ide_host::ops::java::java_project_name(&state.host, window.label(), module).await
+}
+
 /// Incremental build of the jdtls workspace serving `module` (e.g. before HotSwap).
 #[tauri::command]
 #[specta::specta]

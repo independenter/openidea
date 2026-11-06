@@ -17,6 +17,8 @@ struct Script {
     start_debugging: bool,
     ignore_configuration_done: bool,
     source_path: Option<String>,
+    /// List `req` as a java-debug-style lazy variable resolved through a nested request.
+    lazy: bool,
 }
 
 struct FakeLauncher {
@@ -165,13 +167,26 @@ async fn fake_adapter<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(stream
             "scopes" => {
                 ok!(msg, json!({"scopes": [{"name": "Locals", "variablesReference": 100, "expensive": false}]}))
             }
-            "variables" => ok!(
-                msg,
-                json!({"variables": [
-                    {"name": "x", "value": "1", "type": "int", "variablesReference": 0},
-                    {"name": "req", "value": "{Req}", "type": "Req", "variablesReference": 101, "evaluateName": "req"},
-                ]})
-            ),
+            "variables" => {
+                let vr = msg["arguments"]["variablesReference"].as_i64().unwrap_or_default();
+                if vr == 101 {
+                    ok!(
+                        msg,
+                        json!({"variables": [
+                            {"name": "", "value": "{Req} \"details\"", "type": "", "variablesReference": 102, "evaluateName": "req"},
+                        ]})
+                    );
+                } else {
+                    ok!(
+                        msg,
+                        json!({"variables": [
+                            {"name": "x", "value": "1", "type": "int", "variablesReference": 0},
+                            {"name": "req", "value": "{Req}", "type": "Req", "variablesReference": 101, "evaluateName": "req",
+                             "presentationHint": if script.lazy { json!({"lazy": true}) } else { Value::Null }},
+                        ]})
+                    );
+                }
+            }
             "evaluate" => ok!(msg, json!({"result": "42", "type": "int", "variablesReference": 0})),
             "completions" => ok!(
                 msg,
@@ -405,6 +420,24 @@ async fn full_protocol_flow() {
     let terminated =
         h.events.lock().iter().filter(|e| matches!(e, IdeEvent::Debug { event: DebugEvent::Terminated, .. })).count();
     assert_eq!(terminated, 1, "terminated emitted once");
+}
+
+/// java-debug returns toString()-able objects as lazy: identity-only value plus a hint, with the
+/// resolved value (and the real children reference) behind a nested variables request that answers
+/// a single nameless entry. The listing must resolve them so values render without expansion.
+#[tokio::test]
+async fn lazy_variables_resolve_value_and_reference() {
+    let h = harness(Script { lazy: true, ..Default::default() });
+    let id = h.start(config()).await.unwrap();
+    h.wait_event(|e| matches!(e, DebugEvent::Stopped { .. })).await;
+    let vars = h.manager.variables(id, 100).await.unwrap();
+    let req = vars.iter().find(|v| v.name == "req").unwrap();
+    assert_eq!(req.value, "{Req} \"details\"");
+    assert_eq!(req.variables_reference, 102, "children reference moves to the resolved entry");
+    assert_eq!(req.evaluate_name.as_deref(), Some("req"));
+    let x = vars.iter().find(|v| v.name == "x").unwrap();
+    assert_eq!((x.value.as_str(), x.variables_reference), ("1", 0), "non-lazy variables untouched");
+    h.manager.stop(id).await.unwrap();
 }
 
 #[tokio::test]

@@ -194,6 +194,14 @@ pub async fn java_debug_server(host: &Host, window: &str, module: PathBuf) -> Id
     project.lsp.java_debug_server(&module).await
 }
 
+/// Name of the jdtls project serving `module` (java-debug needs it to evaluate).
+pub async fn java_project_name(host: &Host, window: &str, module: PathBuf) -> IdeResult<Option<String>> {
+    host.require_trust(window)?;
+    let project = host.project(window)?;
+    let module = project.root.join(module);
+    project.lsp.java_project_name(&module).await
+}
+
 /// Incremental build of the jdtls workspace serving `module` (e.g. before HotSwap).
 pub async fn java_build_workspace(
     host: &Host,
@@ -213,6 +221,7 @@ pub(crate) fn register(d: &mut Dispatcher) {
             .await
     });
     d.add("java_debug_server", |c| async move { java_debug_server(&c.host, &c.window, c.arg("module")?).await });
+    d.add("java_project_name", |c| async move { java_project_name(&c.host, &c.window, c.arg("module")?).await });
     d.add("java_build_workspace", |c| async move { java_build_workspace(&c.host, &c.window, c.arg("module")?).await });
 }
 

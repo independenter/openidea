@@ -1168,16 +1168,40 @@ impl DebugManager {
     }
 
     pub async fn variables(&self, s: DebugSessionId, reference: i64) -> IdeResult<Vec<Variable>> {
-        let body = self
-            .session(s)?
+        let session = self.session(s)?;
+        let body = session
             .conn
             .request_timeout("variables", json!({ "variablesReference": reference }), REQUEST_TIMEOUT)
             .await?;
-        Ok(body
-            .get("variables")
-            .and_then(Value::as_array)
-            .map(|v| v.iter().map(variable_from).collect())
-            .unwrap_or_default())
+        let raw = body.get("variables").and_then(Value::as_array).cloned().unwrap_or_default();
+        let mut vars: Vec<Variable> = raw.iter().map(variable_from).collect();
+        // java-debug (java) hands out objects whose toString() it could not compute inline as
+        // "lazy": the value is identity-only, and a nested variables request on the reference
+        // returns a single nameless entry carrying the resolved value plus the real children
+        // reference. Resolve them here, like VS Code does for `presentationHint.lazy`.
+        for (var, v) in vars.iter_mut().zip(&raw) {
+            let lazy = v.get("presentationHint").and_then(|h| h.get("lazy")).and_then(Value::as_bool);
+            if lazy != Some(true) || var.variables_reference <= 0 {
+                continue;
+            }
+            let Ok(resolved) = session
+                .conn
+                .request_timeout("variables", json!({ "variablesReference": var.variables_reference }), REQUEST_TIMEOUT)
+                .await
+            else {
+                continue;
+            };
+            let list = resolved.get("variables").and_then(Value::as_array).map(|a| a.as_slice());
+            let Some([entry]) = list else { continue };
+            if entry.get("name").and_then(Value::as_str).unwrap_or("?").is_empty() {
+                if let Some(value) = entry.get("value").and_then(Value::as_str) {
+                    var.value = value.to_owned();
+                }
+                var.variables_reference =
+                    entry.get("variablesReference").and_then(Value::as_i64).unwrap_or(var.variables_reference);
+            }
+        }
+        Ok(vars)
     }
 
     /// Evaluates in the `repl` context.
