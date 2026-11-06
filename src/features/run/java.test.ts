@@ -238,6 +238,11 @@ describe("application configurations", () => {
     });
     const gradle = cfg({ id: "g", kind: "gradle", args: ["test", "--tests", "*OrderTest"], isTest: true });
     expect(jvmTestConfig(gradle, "a.OrderTest", undefined)!.args).toEqual(["test", "--tests", "a.OrderTest"]);
+    // Every old filter pair goes, not just the first one (and a dangling flag).
+    const multi = cfg({ id: "g2", kind: "gradle", args: ["test", "--tests", "Old1", "--tests", "Old2"], isTest: true });
+    expect(jvmTestConfig(multi, "a.OrderTest", undefined)!.args).toEqual(["test", "--tests", "a.OrderTest"]);
+    const dangling = cfg({ id: "g3", kind: "gradle", args: ["test", "--tests"], isTest: true });
+    expect(jvmTestConfig(dangling, "a.OrderTest", undefined)!.args).toEqual(["test", "--tests", "a.OrderTest"]);
   });
 });
 

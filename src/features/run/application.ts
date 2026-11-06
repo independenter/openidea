@@ -49,12 +49,13 @@ export function applicationConfig(
  * `fileConfig` is the file-level configuration whose last argument is the file filter.
  */
 export function jvmTestConfig(fileConfig: RunConfig, className: string, method: string | undefined): RunConfig | null {
-  const args = fileConfig.args.slice(0, -1);
   const simple = simpleClassName(className);
   const name = method ? `${simple}.${method}` : simple;
   const id = `context:target:${fileConfig.id}:${className}${method ? `#${method}` : ""}`;
   switch (fileConfig.kind) {
-    case "maven":
+    case "maven": {
+      // Maven: replace or append `-Dtest=Class#method`
+      const args = fileConfig.args.filter((a) => !a.startsWith("-Dtest="));
       return {
         ...fileConfig,
         id,
@@ -62,18 +63,22 @@ export function jvmTestConfig(fileConfig: RunConfig, className: string, method: 
         env: { ...fileConfig.env },
         args: [...args, `-Dtest=${className}${method ? `#${method}` : ""}`, "-Dsurefire.failIfNoSpecifiedTests=false"],
       };
-    case "gradle":
+    }
+    case "gradle": {
+      // Gradle: replace or append `--tests Class.method`, dropping every old filter pair.
+      const baseArgs: string[] = [];
+      for (let i = 0; i < fileConfig.args.length; i++) {
+        if (fileConfig.args[i] === "--tests") i++;
+        else baseArgs.push(fileConfig.args[i]!);
+      }
       return {
         ...fileConfig,
         id,
         name,
         env: { ...fileConfig.env },
-        args: [
-          ...(args[args.length - 1] === "--tests" ? args.slice(0, -1) : args),
-          "--tests",
-          method ? `${className}.${method}` : className,
-        ],
+        args: [...baseArgs, "--tests", method ? `${className}.${method}` : className],
       };
+    }
   }
   return null;
 }
